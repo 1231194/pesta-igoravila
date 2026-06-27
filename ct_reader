@@ -1,0 +1,144 @@
+import time 
+import math
+import json
+import logging
+import threading
+import random
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+import board
+import busio
+import adafruit_ads1x15.ads1115 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
+
+CORRENTE_MAX_CONTRATADA = 25.0
+CORRENTE_MIN_CARGA = 6.0
+MARGEM_SEGURANCA = 2.0
+
+CT_RACIO = 1000.0
+
+BURDEN_RESISTOR = 22.0
+
+NUM_AMOSTRAS = 100
+
+ADS_GAIN = 1
+
+CT_CANAL = 0
+
+HTTP_PORT = 7070
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
+def inicializar_adc():
+    i2c = busio.I2C(board.SCL, board.SDA)
+    ads = ADS.ADS1115(i2c)
+    ads.gain = ADS_GAIN
+    canal = AnalogIn(ads, CT_CANAL)
+    log.info("ads1115 inicializado - canal A%d, ganho %s", CT_CANAL, ADS_GAIN)
+    return canal 
+
+def ler_corrente_rms(canal: AnalogIn) -> float:
+    soma_quadrados = 0.0
+    OFFSET_TENSAO = 1.65
+
+    for _ in range(NUM_AMOSTRAS):
+        tensao_pura = canal.voltage
+        tensao_ac = tensao_pura - OFFSET_TENSAO
+        soma_quadrados += tensao_ac ** 2
+
+    v_rms = math.sqrt(soma_quadrados / NUM_AMOSTRAS)
+    i_rms = (v_rms /  BURDEN_RESISTOR) * CT_RACIO
+    if i_rms < 0.25:
+        return 0.0
+    return round(i_rms, 3)
+
+def calcular_corrente_disponivel(corrente_atual: float) -> float:
+    disponivel = CORRENTE_MAX_CONTRATADA - corrente_atual - MARGEM_SEGURANCA
+    disponivel = max(CORRENTE_MIN_CARGA, min(disponivel, 32.0))
+    return round(disponivel, 1)
+
+estado = {
+    "corrente_atual_A": 0.0,
+    "corrente_disponivel_A": CORRENTE_MAX_CONTRATADA - MARGEM_SEGURANCA,
+    "potencia_W": 0.0,
+    "timestamp": 0,
+}
+estado_lock = threading.Lock()
+
+class EVCCHandler(BaseHTTPRequestHandler):
+    """
+    GET /meter -> consumo atual da instalação
+    GET /charge -> corrente disponível para o EV
+    """
+
+    def do_GET(self):
+        with estado_lock:
+            dados = dict(estado)
+
+        if self.path == "/meter":
+            resposta = {
+                "power": dados["potencia_W"],
+                "currents": [dados["corrente_atual_A"], 0.0, 0.0],
+            }
+        elif self.path == "/charge":
+            resposta = {
+                "maxCurrent": dados["corrente_disponivel_A"],
+            }
+        elif self.path == "/status":
+            resposta = dados
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        corpo = json.dumps(resposta).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def log_message(self, fmt, *args):
+        pass
+
+def iniciar_servidor_http():
+    servidor = HTTPServer(("0.0.0.0", HTTP_PORT), EVCCHandler)
+    log.info("Servidor HTTP a escutar em :%d", HTTP_PORT)
+    servidor.serve_forever()
+
+def loop_leitura(canal, tensao_rede: float = 230.0):
+    log.info("Loop de leitura iniciado (Ctrl+C para parar)")
+    while True:
+        try:
+            corrente = ler_corrente_rms(canal)
+            disponivel = calcular_corrente_disponivel(corrente)
+            potencia = corrente * tensao_rede
+            
+            with estado_lock:
+                estado["corrente_atual_A"] = corrente 
+                estado["corrente_disponivel_A"] = disponivel
+                estado["potencia_W"] = round(potencia, 1)
+                estado["timestamp"] = int(time.time())
+
+            log.info(
+                "I-atual=%.2f A | I_disponível=%.1f A | P=%5.0f W", 
+                corrente, disponivel, potencia
+            )
+        except Exception as exc:
+            log.error("Erro na leitura do ADC: %s", exc)
+
+        time.sleep(1) 
+
+def main():
+    canal = inicializar_adc()
+    t = threading.Thread(target=iniciar_servidor_http, daemon=True)
+    t.start()
+    loop_leitura(canal)
+
+if __name__ == "__main__":
+    main()

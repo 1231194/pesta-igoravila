@@ -1,0 +1,61 @@
+network:
+  schema: http
+  host: 0.0.0.0
+  port: 7071
+
+ocpp:
+  port: 8887
+
+interval: 5s
+
+meters:
+  - name: grid_meter_kit_ct
+    type: custom
+    power:
+      source: http
+      uri: http://127.0.0.1:7070/meter
+      jq: .power
+    currents:
+      - source: http
+        uri: http://127.0.0.1:7070/meter
+        jq: .currents[0]
+      - source: http
+        uri: http://127.0.0.1:7070/meter
+        jq: .currents[1]
+      - source: http
+        uri: http://127.0.0.1:7070/meter
+        jq: .currents[2]
+
+chargers:
+  - name: wallbox_virtual
+    type: custom
+    status:
+      source: script
+      cmd: echo "B"
+    enabled:
+      source: script
+      cmd: echo "true"
+    enable:
+      source: script
+      cmd: echo "1"
+    maxcurrent:
+      source: script
+      cmd: echo "16"
+
+vehicles:
+  - name: carro_testes
+    type: dummy
+    title: Carro de Testes (Simulado)
+    capacity: 60
+
+loadpoints:
+  - title: Garagem Virtual
+    charger: wallbox_virtual
+    vehicle: carro_testes
+    mode: off
+    phases: 1
+
+site:
+  title: "Leitura Grid sem Wallbox"
+  meters:
+    grid: grid_meter_kit_ct

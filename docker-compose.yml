@@ -1,0 +1,15 @@
+services:
+  evcc:
+    image: evcc/evcc:latest
+    container_name: evcc
+    restart: unless-stopped 
+    volumes:
+      - ./evcc.yaml:/etc/evcc.yaml
+      - evcc_data:/root/.evcc
+    environment:
+      - TZ=Europe/Lisbon  
+
+    network_mode: "host"
+
+volumes:
+  evcc_data:

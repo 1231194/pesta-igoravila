@@ -1,0 +1,51 @@
+﻿network:
+  schema: http
+  host: 0.0.0.0
+  port: 7071
+
+ocpp:
+  port: 8887
+
+interval: 10s
+
+meters:
+  - name: grid_meter_kit_ct
+    type: custom
+    power:
+      source: http
+      uri: http://127.0.0.1:7070/meter
+      jq: .power
+    currents:
+      - source: http
+        uri: http://127.0.0.1:7070/meter
+        jq: .currents[0]
+      - source: http
+        uri: http://127.0.0.1:7070/meter
+        jq: .currents[1]
+      - source: http
+        uri: http://127.0.0.1:7070/meter
+        jq: .currents[2]
+
+chargers:
+  - name: raedian
+    type: ocpp
+  
+
+vehicles:
+  - name: carro_testes
+    type: template
+    template: offline
+    title: Carro de Testes (Simulado)
+    capacity: 60
+
+loadpoints:
+  - title: Garagem Virtual
+    charger: raedian
+    vehicle: carro_testes
+    mode: off
+    phases: 1
+
+site:
+  title: "Leitura Com a Wallbox conectada"
+  meters:
+    grid: grid_meter_kit_ct
